@@ -24,8 +24,16 @@ Trading is **not** done by this repo running as a server somewhere. It's driven 
 4. If `signal-check` reports the market's closed or there's nothing new, it stops there.
 5. If there's a fresh signal, it uses the **Robinhood Agentic Trading MCP connector**
    (`https://agent.robinhood.com/mcp/trading`) to check current account equity/positions,
-   size the trade against a hard 5% position cap, run Robinhood's own pre-trade order
-   review, and place the order if that review is clean.
+   size the trade against the position caps (see [Risk controls](#risk-controls)), run
+   Robinhood's own pre-trade order review, and place the order if that review is clean.
+6. A separate **daily report routine** (`robinhoop-trader-daily-report`, M-F at 21:05 UTC,
+   ~30 min after the trading routine) pulls today's actual order history straight from
+   Robinhood — not the trading routine's own self-narration — and creates a Gmail **draft**
+   summarizing the day (orders placed, current account value/positions). It's a draft, not
+   a sent email: the Gmail MCP connector can only create drafts, not send them (a deliberate
+   safety restriction, confirmed by testing — a real send attempt was verified to land in
+   Drafts, not Sent). A push-notification alternative was tested and confirmed not to reach
+   the phone/desktop from an unattended routine context, so drafts are the working option.
 
 No credentials are stored or handled anywhere in this flow — the Robinhood MCP connection
 authenticates via OAuth once, outside this repo entirely, the same way connecting Robinhood
@@ -78,8 +86,9 @@ most well-known setups there is, and any edge it may have had is thoroughly arbi
 - **Kill switch**: disable the routine (`https://claude.ai/code/routines`).
 - **Robinhood's own pre-trade review** (`review_equity_order`) is called before every order;
   the routine will not place an order if the review flags a warning.
-- Currently running against a small (~$33) balance in a dedicated Robinhood "Agentic" account,
-  intentionally, to validate the whole flow with minimal real money at stake.
+- Currently running against a small (~$133, funded up from an initial ~$33) balance in a
+  dedicated Robinhood "Agentic" account, intentionally, to validate the whole flow before
+  any larger real money is at stake.
 
 ## Other files in this repo
 
