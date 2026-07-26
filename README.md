@@ -9,8 +9,15 @@ not as a strategy with a proven expectation of profit. See [Strategy caveats](#s
 Trading is **not** done by this repo running as a server somewhere. It's driven by a
 **scheduled Claude cloud agent ("routine")** that:
 
-1. Wakes up on a cron schedule (currently `30 13-19 * * 1-5` — roughly 9:30am–3:30pm ET,
-   weekdays; needs shifting by an hour when Daylight Saving changes).
+1. Wakes up on a cron schedule (currently `35 20 * * 1-5` — 4:35pm ET, weekdays, shortly
+   after the market close; needs shifting to `35 21 * * 1-5` when Daylight Saving ends).
+   This strategy operates on daily bars, so one run shortly after close — evaluated
+   against the day's final, settled price — is more correct than checking intraday
+   against Yahoo's still-forming current-day bar, which can flicker before the close
+   actually settles it. Any resulting order is placed after-hours and executes at the
+   next session's open — standard, well-supported brokerage behavior, though this
+   specific path (after-hours submission via the Robinhood MCP tools) hasn't yet been
+   exercised with a real signal.
 2. Clones this repo into a fresh, isolated cloud sandbox (no state carried over between runs).
 3. Builds the Java app and runs `signal-check` — deterministic, credential-free crossover
    signal computation (see below).
