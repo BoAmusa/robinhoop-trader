@@ -70,7 +70,7 @@ most well-known setups there is, and any edge it may have had is thoroughly arbi
 
 ## Risk controls
 
-- **Position cap**: max 5% of current account equity per trade (hard-coded in the routine's prompt).
+- **Position cap**: max 20% of current account equity per trade (hard-coded in the routine's prompt; raised from an initial 5% once the account was funded beyond trivial test money).
 - **No daily loss halt**: dropped for now — Robinhood's MCP tools don't expose a day-over-day
   equity change, and the account has no trading history to derive a baseline from. Revisit if
   the account is funded more meaningfully.
