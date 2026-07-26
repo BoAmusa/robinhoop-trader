@@ -97,12 +97,19 @@ most well-known setups there is, and any edge it may have had is thoroughly arbi
   dedicated Robinhood "Agentic" account, intentionally, to validate the whole flow before
   any larger real money is at stake.
 
-## Other files in this repo
+## History: abandoned hosting approaches
 
-`Dockerfile`, `render.yaml`, and `deploy/` (systemd unit, `.env.example`) are from earlier,
-**abandoned** hosting approaches (Render Background Worker, a self-hosted VPS running the
-`live` mode's direct Robinhood login). They're kept for reference but aren't part of how this
-actually runs today — see "How it actually runs" above. The direct-login approach in particular
-was abandoned because Robinhood's fraud detection flags automated logins from datacenter IPs
-using an unofficial/reverse-engineered client — the MCP-based routine avoids this entirely by
-using Robinhood's own sanctioned agentic-trading integration instead.
+Two earlier hosting approaches were tried and abandoned before landing on the Cloud
+Routine + MCP architecture described above — their deployment config (`Dockerfile`,
+`.dockerignore`, `render.yaml`, `deploy/`) has been removed from the repo, but the `live`
+and `login-test` modes in `Main.java` are what they used to deploy, and are kept as
+legacy/reference code:
+
+- **A self-hosted VPS** (Oracle Cloud) running `live` mode, which logs into Robinhood
+  directly via an unofficial, reverse-engineered API. Abandoned because Robinhood's fraud
+  detection flags automated logins from datacenter IPs using a non-official client — this
+  is exactly the failure the MCP-based routine avoids, by using Robinhood's own sanctioned
+  agentic-trading integration instead of a scraped login.
+- **Render Background Worker**, running the same `live` mode in a container. Abandoned for
+  the same underlying reason — it's still a direct, unofficial login from a datacenter IP,
+  just a different host.
