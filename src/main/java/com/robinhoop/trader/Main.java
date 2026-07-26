@@ -20,8 +20,10 @@ import com.robinhoop.trader.risk.DailyEquityTracker;
 import com.robinhoop.trader.risk.KillSwitch;
 import com.robinhoop.trader.risk.RiskLimits;
 import com.robinhoop.trader.risk.RiskManager;
+import com.robinhoop.trader.scheduler.MarketHours;
 import com.robinhoop.trader.scheduler.MarketHoursScheduler;
 import com.robinhoop.trader.strategy.MovingAverageCrossoverStrategy;
+import com.robinhoop.trader.strategy.Signal;
 import com.robinhoop.trader.strategy.SignalTracker;
 import com.robinhoop.trader.strategy.Strategy;
 
@@ -50,7 +52,9 @@ public class Main {
             case "backtest" -> runBacktest();
             case "live" -> runLive();
             case "login-test" -> runLoginTest();
-            default -> System.out.println("Unknown mode: " + mode + ". Supported modes: backtest, live, login-test");
+            case "signal-check" -> runSignalCheck();
+            default -> System.out.println(
+                    "Unknown mode: " + mode + ". Supported modes: backtest, live, login-test, signal-check");
         }
     }
 
@@ -140,6 +144,49 @@ public class Main {
         System.out.printf("Login succeeded. Account %s — equity: $%.2f, buying power: $%.2f%n",
                 account.accountNumber(), account.equity(), account.buyingPower());
         System.out.println("Session cached to robinhood.session.json for reuse by future runs, including the systemd service.");
+    }
+
+    /**
+     * Credential-free, deterministic signal computation — no Robinhood auth involved.
+     * Prints one "SIGNAL SYMBOL BUY|SELL PRICE" line per symbol with a fresh crossover
+     * dated today, "NO_SIGNALS" if none, or "MARKET_CLOSED" and exits immediately if
+     * outside regular US market hours. Designed to be run by an orchestrator (e.g. a
+     * scheduled agent) that then decides what, if anything, to actually trade via a
+     * separate execution channel (e.g. the Robinhood MCP connector) — this command
+     * itself never places an order.
+     */
+    private static void runSignalCheck() {
+        if (!MarketHours.isOpen()) {
+            System.out.println("MARKET_CLOSED");
+            return;
+        }
+
+        MarketDataClient marketDataClient = new YahooFinanceMarketDataClient();
+        Strategy strategy = new MovingAverageCrossoverStrategy(20, 50);
+        LocalDate today = LocalDate.now();
+        LocalDate historyStart = today.minusDays(120);
+
+        boolean anySignal = false;
+        for (String symbol : WATCHLIST) {
+            try {
+                List<Bar> bars = marketDataClient.getDailyHistory(symbol, historyStart, today);
+                List<Signal> signals = strategy.generateSignals(symbol, bars);
+                if (signals.isEmpty()) {
+                    continue;
+                }
+                Signal latest = signals.get(signals.size() - 1);
+                if (latest.date().equals(today)) {
+                    System.out.printf("SIGNAL %s %s %.2f%n", symbol, latest.type(), latest.price());
+                    anySignal = true;
+                }
+            } catch (Exception e) {
+                System.out.println("ERROR " + symbol + " " + e.getMessage());
+            }
+        }
+
+        if (!anySignal) {
+            System.out.println("NO_SIGNALS");
+        }
     }
 
     static ConfirmationPrompt resolveConfirmationPrompt(String approvalMode) {
