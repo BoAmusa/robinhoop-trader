@@ -71,6 +71,7 @@ most well-known setups there is, and any edge it may have had is thoroughly arbi
 ## Risk controls
 
 - **Position cap**: max 20% of current account equity per trade (hard-coded in the routine's prompt; raised from an initial 5% once the account was funded beyond trivial test money).
+- **Aggregate per-run cap**: max 40% of current account equity in *new* BUY orders within a single run, tracked via a running `deployed_this_run` counter the agent maintains for that run only. This exists because the watchlist has correlated names (SPY/QQQ plus several mega-cap tech stocks) — without it, a single broad market move could trigger BUY signals on several symbols at once and commit 80%+ of the account in one run. SELL orders don't count against this cap.
 - **No daily loss halt**: dropped for now — Robinhood's MCP tools don't expose a day-over-day
   equity change, and the account has no trading history to derive a baseline from. Revisit if
   the account is funded more meaningfully.
