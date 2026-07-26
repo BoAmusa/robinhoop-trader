@@ -19,8 +19,9 @@ services:
         sync: false
       - key: ROBINHOOD_PASSWORD
         sync: false
+      # Not stored here — fill in via the Render dashboard, same as the credentials above.
       - key: ROBINHOOD_ACCOUNT_NUMBER
-        value: "401909924"
+        sync: false
       # Keep false until you've reviewed dry-run output during real market hours.
       - key: LIVE_TRADING_ENABLED
         value: "false"
