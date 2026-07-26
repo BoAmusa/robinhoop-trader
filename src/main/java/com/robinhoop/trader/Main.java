@@ -49,7 +49,8 @@ public class Main {
         switch (mode) {
             case "backtest" -> runBacktest();
             case "live" -> runLive();
-            default -> System.out.println("Unknown mode: " + mode + ". Supported modes: backtest, live");
+            case "login-test" -> runLoginTest();
+            default -> System.out.println("Unknown mode: " + mode + ". Supported modes: backtest, live, login-test");
         }
     }
 
@@ -117,6 +118,28 @@ public class Main {
         MarketHoursScheduler scheduler = new MarketHoursScheduler(Duration.ofMinutes(intervalMinutes), task);
         Runtime.getRuntime().addShutdownHook(new Thread(scheduler::stop));
         scheduler.start();
+    }
+
+    /**
+     * Read-only connectivity check: logs in (prompting for an SMS code if this is the
+     * first login) and fetches account equity, then exits. Doesn't touch positions or
+     * orders. Useful to validate credentials/MFA/session caching independent of market
+     * hours — "live" mode never calls the broker at all outside 9:30-16:00 ET.
+     */
+    private static void runLoginTest() {
+        String accountNumber = requireEnv("ROBINHOOD_ACCOUNT_NUMBER");
+        Credentials credentials = Credentials.fromEnvironment();
+
+        HttpClient httpClient = HttpClient.newHttpClient();
+        RobinhoodAuthClient authClient = new RobinhoodAuthClient(httpClient, new ConsoleMfaPrompt());
+        SessionManager sessionManager = new SessionManager(authClient, new SessionStore());
+        RobinhoodApiClient brokerClient = new RobinhoodApiClient(httpClient, sessionManager, credentials);
+
+        System.out.println("Logging in to Robinhood (you may be prompted for a verification code)...");
+        var account = brokerClient.getAccount(accountNumber);
+        System.out.printf("Login succeeded. Account %s — equity: $%.2f, buying power: $%.2f%n",
+                account.accountNumber(), account.equity(), account.buyingPower());
+        System.out.println("Session cached to robinhood.session.json for reuse by future runs, including the systemd service.");
     }
 
     static ConfirmationPrompt resolveConfirmationPrompt(String approvalMode) {
