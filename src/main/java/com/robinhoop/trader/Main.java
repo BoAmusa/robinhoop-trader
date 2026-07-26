@@ -9,6 +9,8 @@ import com.robinhoop.trader.backtest.BacktestEngine;
 import com.robinhoop.trader.backtest.BacktestResult;
 import com.robinhoop.trader.backtest.Regime;
 import com.robinhoop.trader.broker.RobinhoodApiClient;
+import com.robinhoop.trader.execution.AutoApproveConfirmationPrompt;
+import com.robinhoop.trader.execution.ConfirmationPrompt;
 import com.robinhoop.trader.execution.ConsoleConfirmationPrompt;
 import com.robinhoop.trader.execution.OrderExecutor;
 import com.robinhoop.trader.marketdata.MarketDataClient;
@@ -85,9 +87,16 @@ public class Main {
         int intervalMinutes = envIntOrDefault("CHECK_INTERVAL_MINUTES", 15);
         int historyDays = envIntOrDefault("HISTORY_DAYS", 120);
 
+        String approvalMode = System.getenv().getOrDefault("TRADE_APPROVAL_MODE", "manual");
+        ConfirmationPrompt confirmationPrompt = resolveConfirmationPrompt(approvalMode);
+
         System.out.println(dryRun
                 ? "Starting in DRY RUN mode — no orders will be sent. Set LIVE_TRADING_ENABLED=true to go live."
                 : "Starting in LIVE mode — orders WILL be submitted to Robinhood after confirmation.");
+        if ("auto".equalsIgnoreCase(approvalMode)) {
+            System.out.println("TRADE_APPROVAL_MODE=auto — trades within risk limits will execute with NO human "
+                    + "confirmation step. Safety relies entirely on MAX_POSITION_PCT, MAX_DAILY_LOSS_PCT, and the kill switch.");
+        }
 
         HttpClient httpClient = HttpClient.newHttpClient();
         RobinhoodAuthClient authClient = new RobinhoodAuthClient(httpClient, new ConsoleMfaPrompt());
@@ -96,7 +105,7 @@ public class Main {
 
         RiskManager riskManager = new RiskManager(RiskLimits.fromEnvironment(), new KillSwitch(), new DailyEquityTracker());
         OrderExecutor orderExecutor = new OrderExecutor(
-                brokerClient, riskManager, new ConsoleConfirmationPrompt(), accountNumber, dryRun);
+                brokerClient, riskManager, confirmationPrompt, accountNumber, dryRun);
 
         Strategy strategy = new MovingAverageCrossoverStrategy(20, 50);
         MarketDataClient marketDataClient = new YahooFinanceMarketDataClient();
@@ -108,6 +117,12 @@ public class Main {
         MarketHoursScheduler scheduler = new MarketHoursScheduler(Duration.ofMinutes(intervalMinutes), task);
         Runtime.getRuntime().addShutdownHook(new Thread(scheduler::stop));
         scheduler.start();
+    }
+
+    static ConfirmationPrompt resolveConfirmationPrompt(String approvalMode) {
+        return "auto".equalsIgnoreCase(approvalMode)
+                ? new AutoApproveConfirmationPrompt()
+                : new ConsoleConfirmationPrompt();
     }
 
     private static String requireEnv(String key) {

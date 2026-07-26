@@ -43,3 +43,4 @@ build/
 *.session.json
 credentials/
 *.kill-switch
+dependency-reduced-pom.xml
