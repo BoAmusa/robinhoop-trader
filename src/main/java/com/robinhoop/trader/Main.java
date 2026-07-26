@@ -13,6 +13,8 @@ import com.robinhoop.trader.execution.AutoApproveConfirmationPrompt;
 import com.robinhoop.trader.execution.ConfirmationPrompt;
 import com.robinhoop.trader.execution.ConsoleConfirmationPrompt;
 import com.robinhoop.trader.execution.OrderExecutor;
+import com.robinhoop.trader.execution.OrderPlanner;
+import com.robinhoop.trader.execution.PlanLine;
 import com.robinhoop.trader.marketdata.MarketDataClient;
 import com.robinhoop.trader.marketdata.YahooFinanceMarketDataClient;
 import com.robinhoop.trader.model.Bar;
@@ -27,10 +29,17 @@ import com.robinhoop.trader.strategy.Signal;
 import com.robinhoop.trader.strategy.SignalTracker;
 import com.robinhoop.trader.strategy.Strategy;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Main {
 
@@ -53,8 +62,9 @@ public class Main {
             case "live" -> runLive();
             case "login-test" -> runLoginTest();
             case "signal-check" -> runSignalCheck();
+            case "order-plan" -> runOrderPlan(Arrays.copyOfRange(args, 1, args.length));
             default -> System.out.println(
-                    "Unknown mode: " + mode + ". Supported modes: backtest, live, login-test, signal-check");
+                    "Unknown mode: " + mode + ". Supported modes: backtest, live, login-test, signal-check, order-plan");
         }
     }
 
@@ -161,12 +171,68 @@ public class Main {
             return;
         }
 
+        List<Signal> signals = fetchTodaysSignals();
+        if (signals.isEmpty()) {
+            System.out.println("NO_SIGNALS");
+            return;
+        }
+        for (Signal signal : signals) {
+            System.out.printf("SIGNAL %s %s %.2f%n", signal.symbol(), signal.type(), signal.price());
+        }
+    }
+
+    /**
+     * Full order-sizing pipeline: computes today's signals, then runs them through
+     * {@link OrderPlanner} — the position-cap and aggregate-cap money math — so the
+     * caller (a scheduled agent) only ever executes an exact, pre-computed plan rather
+     * than doing that arithmetic itself. Never calls Robinhood; the caller supplies
+     * current account value and positions and is responsible for actually placing
+     * whatever ORDER lines this prints.
+     *
+     * Usage: order-plan &lt;account_value&gt;, with current positions piped via stdin as
+     * one "SYMBOL QUANTITY" line per held position.
+     */
+    private static void runOrderPlan(String[] args) {
+        if (args.length < 1) {
+            System.out.println("ERROR missing account_value argument");
+            return;
+        }
+        double accountValue;
+        try {
+            accountValue = Double.parseDouble(args[0]);
+        } catch (NumberFormatException e) {
+            System.out.println("ERROR invalid account_value: " + args[0]);
+            return;
+        }
+
+        Map<String, Double> positions = readPositionsFromStdin();
+
+        if (!MarketHours.isOpen()) {
+            System.out.println("MARKET_CLOSED");
+            return;
+        }
+
+        List<Signal> signals = fetchTodaysSignals();
+        if (signals.isEmpty()) {
+            System.out.println("NO_SIGNALS");
+            return;
+        }
+
+        double positionCapPct = envDoubleOrDefault("POSITION_CAP_PCT", 0.20);
+        double aggregateCapPct = envDoubleOrDefault("AGGREGATE_CAP_PCT", 0.40);
+        OrderPlanner planner = new OrderPlanner(positionCapPct, aggregateCapPct);
+        for (PlanLine line : planner.plan(signals, accountValue, positions)) {
+            System.out.println(line.toOutputLine());
+        }
+    }
+
+    private static List<Signal> fetchTodaysSignals() {
         MarketDataClient marketDataClient = new YahooFinanceMarketDataClient();
         Strategy strategy = new MovingAverageCrossoverStrategy(20, 50);
         LocalDate today = LocalDate.now();
         LocalDate historyStart = today.minusDays(120);
 
-        boolean anySignal = false;
+        List<Signal> todaysSignals = new ArrayList<>();
         for (String symbol : WATCHLIST) {
             try {
                 List<Bar> bars = marketDataClient.getDailyHistory(symbol, historyStart, today);
@@ -176,17 +242,34 @@ public class Main {
                 }
                 Signal latest = signals.get(signals.size() - 1);
                 if (latest.date().equals(today)) {
-                    System.out.printf("SIGNAL %s %s %.2f%n", symbol, latest.type(), latest.price());
-                    anySignal = true;
+                    todaysSignals.add(latest);
                 }
             } catch (Exception e) {
                 System.out.println("ERROR " + symbol + " " + e.getMessage());
             }
         }
+        return todaysSignals;
+    }
 
-        if (!anySignal) {
-            System.out.println("NO_SIGNALS");
+    private static Map<String, Double> readPositionsFromStdin() {
+        Map<String, Double> positions = new HashMap<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = line.split("\\s+");
+                if (parts.length != 2) {
+                    continue;
+                }
+                positions.put(parts[0].toUpperCase(), Double.parseDouble(parts[1]));
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read positions from stdin", e);
         }
+        return positions;
     }
 
     static ConfirmationPrompt resolveConfirmationPrompt(String approvalMode) {
@@ -206,5 +289,10 @@ public class Main {
     private static int envIntOrDefault(String key, int defaultValue) {
         String value = System.getenv(key);
         return (value == null || value.isBlank()) ? defaultValue : Integer.parseInt(value);
+    }
+
+    private static double envDoubleOrDefault(String key, double defaultValue) {
+        String value = System.getenv(key);
+        return (value == null || value.isBlank()) ? defaultValue : Double.parseDouble(value);
     }
 }
