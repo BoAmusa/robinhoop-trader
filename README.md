@@ -19,13 +19,19 @@ Trading is **not** done by this repo running as a server somewhere. It's driven 
    specific path (after-hours submission via the Robinhood MCP tools) hasn't yet been
    exercised with a real signal.
 2. Clones this repo into a fresh, isolated cloud sandbox (no state carried over between runs).
-3. Builds the Java app and runs `signal-check` — deterministic, credential-free crossover
-   signal computation (see below).
-4. If `signal-check` reports the market's closed or there's nothing new, it stops there.
-5. If there's a fresh signal, it uses the **Robinhood Agentic Trading MCP connector**
-   (`https://agent.robinhood.com/mcp/trading`) to check current account equity/positions,
-   size the trade against the position caps (see [Risk controls](#risk-controls)), run
-   Robinhood's own pre-trade order review, and place the order if that review is clean.
+3. Builds the Java app, then uses the **Robinhood Agentic Trading MCP connector**
+   (`https://agent.robinhood.com/mcp/trading`) to fetch current account value and positions.
+4. Pipes that into `order-plan` (see below) — deterministic, unit-tested code that computes
+   today's crossover signals *and* sizes each one against the position caps (see
+   [Risk controls](#risk-controls)), printing an exact `ORDER`/`SKIP` plan. **The routine's
+   job is purely to execute that plan — fetch data in, run the command, place exactly what
+   it says — not to do any position-sizing arithmetic itself.** This split exists because an
+   earlier version had the LLM agent compute quantities and track the aggregate cap itself
+   from natural-language instructions each run; a self-audit flagged that as the biggest
+   architectural risk in the system, since LLM instruction-following isn't the same
+   correctness guarantee as tested code for money math.
+5. For each `ORDER` line, it runs Robinhood's own pre-trade review and places the order
+   (that exact quantity, unchanged) if the review is clean.
 6. A separate **daily report routine** (`robinhoop-trader-daily-report`, M-F at 21:05 UTC,
    ~30 min after the trading routine) pulls today's actual order history straight from
    Robinhood — not the trading routine's own self-narration — and creates a Gmail **draft**
@@ -50,7 +56,8 @@ nothing to sell → skip a SELL) rather than any local tracker file.
 | Mode | Needs Robinhood creds? | What it does |
 |---|---|---|
 | `backtest` | No | Runs the strategy against historical data (free Yahoo Finance API) across several market regimes and prints performance vs. buy-and-hold. |
-| `signal-check` | No | The mode the cloud routine actually calls. Checks real market hours, then prints today's fresh crossover signals (or `MARKET_CLOSED` / `NO_SIGNALS`) and exits. Never touches a broker. |
+| `signal-check` | No | Checks real market hours, then prints today's fresh crossover signals (or `MARKET_CLOSED` / `NO_SIGNALS`) and exits. Never touches a broker. Superseded by `order-plan` for the live routine, kept as a standalone diagnostic. |
+| `order-plan` | No | **The mode the cloud routine actually calls.** `order-plan <account_value>`, with current positions piped via stdin (`SYMBOL QUANTITY` per line). Computes today's signals, then runs the money math — position cap and aggregate per-run cap — in tested code (`OrderPlanner`, see `OrderPlannerTest`), printing an exact `ORDER`/`SKIP` plan. Never touches a broker; the caller executes the plan. |
 | `login-test` | Yes | Read-only connectivity check for the *legacy* direct-login path (see below). Not used by the current routine. |
 | `live` | Yes | A **legacy**, self-contained live-trading loop that logs into Robinhood directly (unofficial, reverse-engineered API) and manages its own risk/session state on local disk. Superseded by the MCP routine — kept for reference, not currently deployed anywhere. |
 
@@ -78,8 +85,8 @@ most well-known setups there is, and any edge it may have had is thoroughly arbi
 
 ## Risk controls
 
-- **Position cap**: max 20% of current account equity per trade (hard-coded in the routine's prompt; raised from an initial 5% once the account was funded beyond trivial test money).
-- **Aggregate per-run cap**: max 40% of current account equity in *new* BUY orders within a single run, tracked via a running `deployed_this_run` counter the agent maintains for that run only. This exists because the watchlist has correlated names (SPY/QQQ plus several mega-cap tech stocks) — without it, a single broad market move could trigger BUY signals on several symbols at once and commit 80%+ of the account in one run. SELL orders don't count against this cap.
+- **Position cap**: max 20% of current account equity per trade. **Enforced in code** (`OrderPlanner`, `POSITION_CAP_PCT` env var, default 0.20) — not by the LLM agent doing arithmetic. Raised from an initial 5% once the account was funded beyond trivial test money.
+- **Aggregate per-run cap**: max 40% of current account equity in *new* BUY orders within a single run. **Enforced in code** (`AGGREGATE_CAP_PCT` env var, default 0.40) via a running total tracked across the plan computation, not by the agent maintaining its own counter. This exists because the watchlist has correlated names (SPY/QQQ plus several mega-cap tech stocks) — without it, a single broad market move could trigger BUY signals on several symbols at once and commit 80%+ of the account in one run. SELL orders don't count against this cap.
 - **No daily loss halt**: dropped for now — Robinhood's MCP tools don't expose a day-over-day
   equity change, and the account has no trading history to derive a baseline from. Revisit if
   the account is funded more meaningfully.
