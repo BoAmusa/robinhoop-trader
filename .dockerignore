@@ -1,0 +1,8 @@
+target/
+.idea/
+.git/
+.mvn/
+*.session.json
+*.kill-switch
+.env
+deploy/
