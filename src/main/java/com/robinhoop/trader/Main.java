@@ -15,6 +15,7 @@ import com.robinhoop.trader.execution.ConsoleConfirmationPrompt;
 import com.robinhoop.trader.execution.OrderExecutor;
 import com.robinhoop.trader.execution.OrderPlanner;
 import com.robinhoop.trader.execution.PlanLine;
+import com.robinhoop.trader.marketdata.FileMarketDataClient;
 import com.robinhoop.trader.marketdata.MarketDataClient;
 import com.robinhoop.trader.marketdata.YahooFinanceMarketDataClient;
 import com.robinhoop.trader.model.Bar;
@@ -33,6 +34,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -227,7 +229,7 @@ public class Main {
     }
 
     private static List<Signal> fetchTodaysSignals() {
-        MarketDataClient marketDataClient = new YahooFinanceMarketDataClient();
+        MarketDataClient marketDataClient = resolveMarketDataClient();
         Strategy strategy = new MovingAverageCrossoverStrategy(20, 50);
         LocalDate today = LocalDate.now();
         LocalDate historyStart = today.minusDays(120);
@@ -249,6 +251,20 @@ public class Main {
             }
         }
         return todaysSignals;
+    }
+
+    /**
+     * order-plan and signal-check pull historical bars from a pre-fetched CSV file
+     * (SYMBOL,DATE,OPEN,HIGH,LOW,CLOSE,VOLUME) when MARKET_DATA_FILE is set — used when
+     * this process's own outbound access to Yahoo Finance is unavailable and the caller
+     * has instead fetched historicals via another channel (e.g. the Robinhood MCP
+     * connector). Falls back to the direct Yahoo Finance client otherwise.
+     */
+    private static MarketDataClient resolveMarketDataClient() {
+        String marketDataFile = System.getenv("MARKET_DATA_FILE");
+        return (marketDataFile != null && !marketDataFile.isBlank())
+                ? new FileMarketDataClient(Path.of(marketDataFile))
+                : new YahooFinanceMarketDataClient();
     }
 
     private static Map<String, Double> readPositionsFromStdin() {
